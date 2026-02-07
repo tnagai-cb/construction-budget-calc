@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>実行予算書作成ツール</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Noto Sans JP', sans-serif; }
+        @media print {
+            body { background: white; }
+            .print-hidden { display: none !important; }
+            .print-shadow-none { box-shadow: none !important; }
+            .print-border-none { border: none !important; }
+            .print-text-black { color: black !important; }
+            .print-bg-white { background: white !important; }
+            .print-block { display: block !important; }
+            .print-p-0 { padding: 0 !important; }
+            .print-m-0 { margin: 0 !important; }
+            input, select { border: none !important; background: transparent !important; padding: 0 !important; }
+            select { -webkit-appearance: none; -moz-appearance: none; appearance: none; }
+            /* 印刷時は入力欄の下線を消すか薄くする */
+            input { border-bottom: 1px solid #eee !important; }
+        }
+        /* モーダルアニメーション */
+        .modal-enter { opacity: 0; transform: scale(0.95); }
+        .modal-enter-active { opacity: 1; transform: scale(1); transition: opacity 200ms, transform 200ms; }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 antialiased">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // --- アイコン ---
+        const Icon = ({ children, className }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+                {children}
+            </svg>
+        );
+        const CalculatorIcon = () => <Icon><rect width="16" height="20" x="4" y="2" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="16" x2="16" y1="14" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></Icon>;
+        const PrinterIcon = () => <Icon><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2-2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></Icon>;
+        const PlusIcon = () => <Icon><path d="M5 12h14"/><path d="M12 5v14"/></Icon>;
+        const Trash2Icon = () => <Icon><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></Icon>;
+        const WandIcon = () => <Icon><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8 19 13"/><path d="M15 9h0"/><path d="M17.8 6.2 19 5"/><path d="m3 21 9-9"/><path d="M12.2 6.2 11 5"/></Icon>;
+        const XIcon = () => <Icon><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></Icon>;
+        const InfoIcon = () => <Icon><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></Icon>;
+        const CheckIcon = () => <Icon><polyline points="20 6 9 17 4 12"/></Icon>;
+
+        // --- 定数 ---
+        const CATEGORIES = [
+            { id: 'material', name: '材料費', color: 'bg-blue-100 text-blue-800' },
+            { id: 'outsourcing', name: '外注費', color: 'bg-orange-100 text-orange-800' },
+            { id: 'machine', name: '機械費', color: 'bg-green-100 text-green-800' },
+            { id: 'labor', name: '自社労務費', color: 'bg-purple-100 text-purple-800' },
+            { id: 'expense', name: '経費・その他', color: 'bg-gray-100 text-gray-800' },
+        ];
+
+        const ITEM_PRESETS = [
+            { label: '再生密粒アスコン13', category: 'material', defaultPrice: 0 },
+            { label: '再生透水性アスコン', category: 'material', defaultPrice: 0 },
+            { label: 'RC-40 (路盤材)', category: 'material', defaultPrice: 2300 },
+            { label: '乳剤 (PK-3 / ノンスティック)', category: 'material', defaultPrice: 0 },
+            { label: '残土処分費 (3tDT)', category: 'outsourcing', defaultPrice: 12500 },
+            { label: '残土処分費 (4tDT)', category: 'outsourcing', defaultPrice: 15000 },
+            { label: '交通誘導員', category: 'outsourcing', defaultPrice: 18000 },
+            { label: '切削機工事 (夜間含む)', category: 'outsourcing', defaultPrice: 350000 },
+            { label: '区画線 (実線/破線)', category: 'outsourcing', defaultPrice: 0 },
+            { label: '0.1BH (バックホウ)', category: 'machine', defaultPrice: 7000 },
+            { label: '3tダンプ (3tDT)', category: 'machine', defaultPrice: 12000 },
+            { label: 'プレート/ランマー', category: 'machine', defaultPrice: 3500 },
+            { label: 'AF3.0 (アスファルトフィニッシャー)', category: 'machine', defaultPrice: 30000 },
+            { label: 'AF6.0 (アスファルトフィニッシャー)', category: 'machine', defaultPrice: 50000 },
+            { label: '重機運搬費 (回送費)', category: 'machine', defaultPrice: 20000 },
+            { label: '軽油', category: 'machine', defaultPrice: 6000 },
+            { label: '労務費(昼間)', category: 'labor', defaultPrice: 20000 },
+            { label: '労務費(夜間)', category: 'labor', defaultPrice: 25000 },
+            { label: '品質管理費 (試験費)', category: 'expense', defaultPrice: 30000 },
+        ];
+
+        // --- 自動積算モーダル ---
+        const AutoCalcModal = ({ isOpen, onClose, onGenerate }) => {
+            if (!isOpen) return null;
+
+            const [params, setParams] = useState({
+                isNight: false, hasRegulation: true, area: 100, thickness: 4,
+                distancePlant: 10, distanceDump: 10, condition: 3, isMachine: true, truckType: '4t',
+            });
+
+            const estimatedVol = (params.area * (params.thickness / 100) * 2.35).toFixed(1);
+            const basePerformance = params.isMachine ? 250 : 70;
+            const conditionFactor = [0.5, 0.7, 1.0, 1.2, 1.5][params.condition - 1];
+            const dailyPerformance = basePerformance * conditionFactor;
+            const days = Math.ceil(params.area / dailyPerformance) || 1;
+
+            const handleSubmit = () => {
+                onGenerate(params, days, estimatedVol);
+                onClose();
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4 transition-all">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh] border border-slate-200">
+                        <div className="bg-gradient-to-r from-blue-600 to-indigo-700 p-6 flex justify-between items-center text-white">
+                            <div>
+                                <h2 className="text-xl font-bold flex items-center gap-2">
+                                    <WandIcon /> かんたん自動積算ウィザード
+                                </h2>
+                                <p className="text-blue-100 text-sm mt-1">現場の条件を入力するだけで、予算書の下書きを作成します。</p>
+                            </div>
+                            <button onClick={onClose} className="hover:bg-white/20 p-2 rounded-full transition"><XIcon /></button>
+                        </div>
+                        
+                        <div className="p-8 overflow-y-auto flex-1 space-y-8">
+                            {/* STEP 1 */}
+                            <section>
+                                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 border-l-4 border-blue-500 pl-2">Step 1. 基本条件</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <label className={`flex items-center gap-3 p-4 border-2 rounded-xl cursor-pointer transition ${params.isNight ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-blue-300'}`}>
+                                        <div className={`w-6 h-6 rounded-full border flex items-center justify-center ${params.isNight ? 'bg-blue-600 border-blue-600' : 'border-slate-300'}`}>
+                                            {params.isNight && <CheckIcon className="text-white w-4 h-4" />}
+                                        </div>
+                                        <input type="checkbox" checked={params.isNight} onChange={e => setParams({...params, isNight: e.target.checked})} className="hidden" />
+                                        <div>
+                                            <span className="font-bold text-slate-700 block">夜間工事</span>
+                                            <span className="text-xs text-slate-500">労務費や単価の割増を適用</span>
+                                        </div>
+                                    </label>
+                                    <label className={`flex items-center gap-3 p-4 border-2 rounded-xl cursor-pointer transition ${params.hasRegulation ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-blue-300'}`}>
+                                        <div className={`w-6 h-6 rounded-full border flex items-center justify-center ${params.hasRegulation ? 'bg-blue-600 border-blue-600' : 'border-slate-300'}`}>
+                                            {params.hasRegulation && <CheckIcon className="text-white w-4 h-4" />}
+                                        </div>
+                                        <input type="checkbox" checked={params.hasRegulation} onChange={e => setParams({...params, hasRegulation: e.target.checked})} className="hidden" />
+                                        <div>
+                                            <span className="font-bold text-slate-700 block">交通規制あり</span>
+                                            <span className="text-xs text-slate-500">誘導員の配置費用を追加</span>
+                                        </div>
+                                    </label>
+                                </div>
+                            </section>
+
+                            {/* STEP 2 */}
+                            <section>
+                                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 border-l-4 border-blue-500 pl-2">Step 2. 施工規模</h3>
+                                <div className="bg-slate-50 p-6 rounded-xl border border-slate-200 grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div>
+                                        <label className="block text-sm font-bold text-slate-700 mb-2">施工面積 (m²)</label>
+                                        <input type="number" value={params.area} onChange={e => setParams({...params, area: Number(e.target.value)})} className="w-full border-slate-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-slate-700 mb-2">舗装厚 (cm)</label>
+                                        <input type="number" value={params.thickness} onChange={e => setParams({...params, thickness: Number(e.target.value)})} className="w-full border-slate-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition" />
+                                    </div>
+                                    <div className="md:col-span-2 bg-blue-100/50 p-4 rounded-lg flex items-center justify-between">
+                                        <span className="text-sm text-blue-800 font-medium">推定合材重量 (比重2.35t/m³)</span>
+                                        <span className="text-2xl font-bold text-blue-700">{estimatedVol} <span className="text-base font-normal">t</span></span>
+                                    </div>
+                                </div>
+                            </section>
+
+                            {/* STEP 3 */}
+                            <section>
+                                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 border-l-4 border-blue-500 pl-2">Step 3. 現場環境・ロジ</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div>
+                                        <label className="block text-sm font-bold text-slate-700 mb-2">施工条件</label>
+                                        <input type="range" min="1" max="5" value={params.condition} onChange={e => setParams({...params, condition: Number(e.target.value)})} className="w-full accent-blue-600 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer" />
+                                        <div className="flex justify-between text-xs text-slate-500 mt-2 font-medium"><span>狭い・悪い</span><span>普通</span><span>広い・良い</span></div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-slate-700 mb-2">施工方法</label>
+                                        <select value={params.isMachine ? "machine" : "manual"} onChange={e => setParams({...params, isMachine: e.target.value === 'machine'})} className="w-full border-slate-300 rounded-lg p-3">
+                                            <option value="machine">機械施工 (AF/BH)</option>
+                                            <option value="manual">人力施工</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-slate-700 mb-2">プラント距離 (km)</label>
+                                        <div className="relative">
+                                            <input type="number" value={params.distancePlant} onChange={e => setParams({...params, distancePlant: Number(e.target.value)})} className="w-full border-slate-300 rounded-lg p-3 pr-10" />
+                                            <span className="absolute right-3 top-3 text-slate-400 text-sm">km</span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-slate-700 mb-2">使用ダンプ</label>
+                                        <select value={params.truckType} onChange={e => setParams({...params, truckType: e.target.value})} className="w-full border-slate-300 rounded-lg p-3">
+                                            <option value="4t">4t/3t車 (31DT/41DT)</option>
+                                            <option value="10t">10t車 (大型)</option>
+                                            <option value="own">自社ダンプのみ</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </section>
+                        </div>
+
+                        <div className="p-6 border-t bg-slate-50 flex justify-between items-center">
+                            <div className="text-slate-600">
+                                <span className="block text-xs uppercase font-bold tracking-wider">推定工期</span>
+                                <span className="text-2xl font-bold text-slate-800">{days} <span className="text-base font-normal">日</span></span>
+                            </div>
+                            <button onClick={handleSubmit} className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transform active:scale-95 transition flex items-center gap-2">
+                                <WandIcon /> 予算書を作成する
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- メインアプリ ---
+        const App = () => {
+            const [projectTitle, setProjectTitle] = useState('〇〇様邸 舗装工事');
+            const [rows, setRows] = useState([
+                { id: 1, item: '準備費・片付', category: 'labor', supplier: '自社', amount: 20000, remarks: '着手・完了' },
+            ]);
+            const [expenseRate, setExpenseRate] = useState(10);
+            const [welfareRate, setWelfareRate] = useState(3);
+            const [isModalOpen, setIsModalOpen] = useState(false);
+
+            const totalAmount = rows.reduce((sum, row) => sum + (parseFloat(row.amount) || 0), 0);
+            const summary = CATEGORIES.map(cat => {
+                const sum = rows.filter(r => r.category === cat.id).reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+                return { ...cat, sum };
+            });
+
+            // 行操作関数
+            const addRow = (data = {}) => {
+                setRows(prev => [...prev, { 
+                    id: Date.now() + Math.random(), 
+                    item: data.item || '', 
+                    category: data.category || 'material', 
+                    supplier: data.supplier || '', 
+                    amount: data.amount || 0, 
+                    remarks: data.remarks || '' 
+                }]);
+            };
+            const deleteRow = (id) => setRows(prev => prev.filter(r => r.id !== id));
+            const updateRow = (id, field, value) => setRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r));
+
+            const handlePresetChange = (id, presetLabel) => {
+                const preset = ITEM_PRESETS.find(p => p.label === presetLabel);
+                if (preset) {
+                    updateRow(id, 'category', preset.category);
+                    updateRow(id, 'item', preset.label);
+                    setRows(prev => prev.map(r => {
+                        if (r.id === id && r.amount === 0) return { ...r, amount: preset.defaultPrice };
+                        return r;
+                    }));
+                }
+            };
+
+            const generateBudget = (params, days, estimatedVol) => {
+                const newRows = [];
+                const add = (item, cat, sup, amt, rem) => newRows.push({ id: Date.now() + Math.random(), item, category: cat, supplier: sup, amount: Math.floor(amt), remarks: rem });
+
+                // ロジックは維持
+                const disposalUnit = params.truckType === '10t' ? 2000 : 3500;
+                add(`アスファルト殻処分 (${estimatedVol}t)`, 'outsourcing', '産廃業者', estimatedVol * disposalUnit, '処分費'); 
+                
+                const tripsPerDay = Math.max(2, Math.floor(400 / (params.distanceDump * 2 + 20)));
+                const truckCapacity = params.truckType === '10t' ? 9 : 3;
+                const trucksNeeded = Math.ceil(estimatedVol / (truckCapacity * tripsPerDay)) || 1;
+
+                if (params.truckType === '4t' || params.truckType === 'own') {
+                    add(`ダンプ(${params.truckType}) 機械損料`, 'machine', '自社/リース', trucksNeeded * days * 12000, `${trucksNeeded}台×${days}日`);
+                    add(`軽油 (ダンプ分)`, 'machine', 'GS', trucksNeeded * days * 6000, '燃料');
+                } else {
+                    add(`残土運搬費 (${params.truckType}車×${trucksNeeded}台)`, 'outsourcing', '運搬業者', trucksNeeded * 35000, '傭車');
+                }
+
+                if (params.isMachine) {
+                    add('0.1BH (バックホウ)', 'machine', 'リース', days * 7000, `${days}日分`);
+                    add('重機運搬費 (回送)', 'machine', '運搬', 20000, '往復');
+                }
+                const rcAmount = params.area * 0.1 * 1.9;
+                add('路盤材 RC-40', 'material', '建材店', rcAmount * 2300, `${Math.ceil(rcAmount)}t想定`);
+
+                const asUnitCost = 12500;
+                add(`再生密粒アスコン (${params.thickness}cm)`, 'material', 'プラント', estimatedVol * asUnitCost, `${estimatedVol}t`);
+                add('乳剤 (PK-3)', 'material', 'プラント', params.area * 100, '0.5L/m2');
+
+                if (params.isMachine) {
+                    const afCost = params.area > 500 ? 50000 : 30000;
+                    const afName = params.area > 500 ? 'AF6.0' : 'AF3.0';
+                    add(afName, 'machine', 'リース', days * afCost, `${days}日分`);
+                    add('タイヤローラー/マカダム', 'machine', 'リース', days * 10000, `${days}日分`);
+                }
+                add('プレート/ランマー', 'machine', 'リース', days * 3500, `${days}日分`);
+                add('軽油 (重機分)', 'machine', 'GS', days * 8000, '重機燃料');
+                
+                const workerCount = params.isMachine ? 4 : 3; 
+                const unitLabor = params.isNight ? 28000 : 20000;
+                add(`世話役 (${params.isNight ? '夜間' : '昼間'})`, 'labor', '自社', days * (unitLabor + 5000), `${days}日`);
+                add(`作業員 (${params.isNight ? '夜間' : '昼間'})`, 'labor', '自社', days * workerCount * unitLabor, `${workerCount}人×${days}日`);
+
+                if (params.hasRegulation) {
+                    const guardUnit = params.isNight ? 22000 : 18000;
+                    add(`交通誘導員 (${params.isNight ? '夜間' : '昼間'})`, 'outsourcing', '警備会社', days * 2 * guardUnit, `2名×${days}日`);
+                }
+
+                setRows(newRows);
+            };
+
+            const addOverhead = () => {
+                const currentRows = rows.filter(r => !r.item.includes('諸経費 ('));
+                const overheadAmount = Math.floor(totalAmount * (expenseRate / 100));
+                setRows([...currentRows, { id: Date.now(), item: `諸経費 (${expenseRate}%)`, category: 'expense', supplier: '-', amount: overheadAmount, remarks: '自動計算' }]);
+            };
+            const addWelfare = () => {
+                const currentRows = rows.filter(r => !r.item.includes('法定福利費 ('));
+                const welfareAmount = Math.floor(totalAmount * (welfareRate / 100));
+                setRows([...currentRows, { id: Date.now() + 1, item: `法定福利費 (${welfareRate}%)`, category: 'expense', supplier: '-', amount: welfareAmount, remarks: '自動計算' }]);
+            };
+
+            return (
+                <div className="min-h-screen pb-20 font-sans print:pb-0">
+                    {/* Header */}
+                    <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm print-hidden">
+                        <div className="max-w-5xl mx-auto px-4 md:px-8 py-4">
+                            <div className="flex justify-between items-center">
+                                <div className="flex items-center gap-3">
+                                    <div className="bg-blue-600 p-2 rounded-lg text-white">
+                                        <CalculatorIcon />
+                                    </div>
+                                    <div>
+                                        <h1 className="text-xl font-bold text-slate-800 leading-tight">実行予算書メーカー</h1>
+                                        <p className="text-xs text-slate-500">初心者対応モード</p>
+                                    </div>
+                                </div>
+                                <div className="flex gap-3">
+                                    <button onClick={() => window.print()} className="flex items-center gap-2 bg-slate-100 text-slate-600 px-4 py-2 rounded-lg hover:bg-slate-200 transition font-medium text-sm">
+                                        <PrinterIcon /> <span className="hidden md:inline">印刷 / PDF</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Step Navigation */}
+                    <div className="bg-slate-50 border-b border-slate-200 print-hidden">
+                        <div className="max-w-5xl mx-auto px-4 md:px-8 py-3 overflow-x-auto">
+                            <div className="flex items-center gap-2 text-xs font-bold text-slate-400 min-w-max">
+                                <span className="bg-blue-600 text-white px-2 py-0.5 rounded-full">STEP 1</span>
+                                <span className="text-blue-700">自動積算でベース作成</span>
+                                <Icon className="w-4 h-4 text-slate-300"><polyline points="9 18 15 12 9 6" /></Icon>
+                                <span>STEP 2</span>
+                                <span>項目を調整</span>
+                                <Icon className="w-4 h-4 text-slate-300"><polyline points="9 18 15 12 9 6" /></Icon>
+                                <span>STEP 3</span>
+                                <span>経費を追加</span>
+                                <Icon className="w-4 h-4 text-slate-300"><polyline points="9 18 15 12 9 6" /></Icon>
+                                <span>STEP 4</span>
+                                <span>印刷して完了</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <main className="max-w-5xl mx-auto mt-6 px-4 md:px-8 print:mt-0 print:px-0">
+                        
+                        {/* Hero / Action Area */}
+                        <div className="mb-8 print-hidden">
+                            <div className="bg-gradient-to-r from-indigo-500 to-blue-600 rounded-2xl p-6 text-white shadow-lg flex flex-col md:flex-row justify-between items-center gap-6">
+                                <div>
+                                    <h2 className="text-2xl font-bold mb-2">まずはここから！</h2>
+                                    <p className="text-blue-100">現場の条件を入れるだけで、プロ並みの予算書を自動作成します。</p>
+                                </div>
+                                <button onClick={() => setIsModalOpen(true)} className="bg-white text-blue-600 px-6 py-3 rounded-xl font-bold hover:bg-blue-50 hover:shadow-xl hover:-translate-y-1 transition flex items-center gap-2 shadow-md whitespace-nowrap">
+                                    <WandIcon /> かんたん自動積算
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Document Canvas */}
+                        <div className="bg-white shadow-xl shadow-slate-200/50 rounded-xl overflow-hidden print-shadow-none print:w-full border border-slate-100 print-border-none">
+                            
+                            {/* Project Title */}
+                            <div className="p-8 border-b border-slate-100 print-p-0 print:mb-6">
+                                <label className="block text-xs font-bold text-slate-400 mb-1 print-hidden">工事名称</label>
+                                <input type="text" value={projectTitle} onChange={(e) => setProjectTitle(e.target.value)} className="text-2xl md:text-3xl font-bold w-full bg-transparent border-b-2 border-transparent hover:border-slate-200 focus:border-blue-500 focus:outline-none transition py-2 placeholder-slate-300 print:text-2xl print-border-none" placeholder="ここに工事名を入力..." />
+                                <div className="mt-2 text-right text-xs text-slate-400 print-hidden">作成日: {new Date().toLocaleDateString()}</div>
+                            </div>
+
+                            {/* Summary Dashboard */}
+                            <div className="p-8 bg-slate-50/50 border-b border-slate-100 print-bg-white print-p-0 print-border-none print:mb-4">
+                                <div className="flex flex-col md:flex-row gap-8 items-center">
+                                    <div className="w-full md:w-1/3">
+                                        <div className="text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider print-text-black">予算総額 (税抜)</div>
+                                        <div className="text-4xl font-bold text-slate-800 tracking-tight print-text-black">{new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY' }).format(totalAmount)}</div>
+                                    </div>
+                                    <div className="w-full md:w-2/3">
+                                        <div className="flex h-3 rounded-full overflow-hidden bg-slate-200 mb-3 print-hidden">
+                                            {summary.map(cat => cat.sum > 0 && <div key={cat.id} style={{ width: `${(cat.sum / totalAmount) * 100}%` }} className={`${cat.color.split(' ')[0].replace('bg-', 'bg-')} h-full`} />)}
+                                        </div>
+                                        <div className="flex flex-wrap gap-4 text-xs">
+                                            {summary.map(cat => (
+                                                <div key={cat.id} className="flex items-center gap-1.5">
+                                                    <span className={`w-2.5 h-2.5 rounded-full ${cat.color.split(' ')[0]}`} style={{backgroundColor: cat.id==='material'?'#dbeafe':cat.id==='outsourcing'?'#ffedd5':cat.id==='machine'?'#dcfce7':cat.id==='labor'?'#f3e8ff':'#f3f4f6'}}></span>
+                                                    <span className="text-slate-600">{cat.name}</span>
+                                                    <span className="font-bold text-slate-800 ml-1">{new Intl.NumberFormat('ja-JP').format(cat.sum)}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Budget Table */}
+                            <div className="p-8 print-p-0">
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left border-collapse">
+                                        <thead>
+                                            <tr className="text-xs font-bold text-slate-400 border-b border-slate-200 uppercase tracking-wider">
+                                                <th className="py-3 px-2 w-1/4">項目（工種）</th>
+                                                <th className="py-3 px-2 w-1/6">分類</th>
+                                                <th className="py-3 px-2 w-1/5">発注先</th>
+                                                <th className="py-3 px-2 w-1/6 text-right">金額 (円)</th>
+                                                <th className="py-3 px-2 w-1/6">備考</th>
+                                                <th className="py-3 px-2 w-10 print-hidden"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="text-slate-700 text-sm">
+                                            {rows.map(row => (
+                                                <tr key={row.id} className="border-b border-slate-100 hover:bg-blue-50/30 group transition print-border-none">
+                                                    <td className="py-3 px-2">
+                                                        <input list={`presets-${row.id}`} value={row.item} onChange={e => { updateRow(row.id, 'item', e.target.value); handlePresetChange(row.id, e.target.value); }} className="w-full bg-transparent focus:bg-white border-b border-transparent focus:border-blue-400 rounded-none px-1 py-1 outline-none font-bold text-slate-700 placeholder-slate-300" placeholder="項目名を入力..." />
+                                                        <datalist id={`presets-${row.id}`}>{ITEM_PRESETS.map(p => <option key={p.label} value={p.label} />)}</datalist>
+                                                    </td>
+                                                    <td className="py-3 px-2">
+                                                        <select value={row.category} onChange={e => updateRow(row.id, 'category', e.target.value)} className={`w-full text-xs font-bold rounded px-2 py-1.5 cursor-pointer border-none outline-none ${CATEGORIES.find(c => c.id === row.category)?.color}`}>
+                                                            {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                                        </select>
+                                                    </td>
+                                                    <td className="py-3 px-2"><input value={row.supplier} onChange={e => updateRow(row.id, 'supplier', e.target.value)} className="w-full bg-transparent focus:bg-white border-b border-transparent focus:border-blue-400 px-1 py-1 outline-none placeholder-slate-300" placeholder="発注先..." /></td>
+                                                    <td className="py-3 px-2"><input type="number" value={row.amount} onChange={e => updateRow(row.id, 'amount', e.target.value)} className="w-full text-right bg-transparent focus:bg-white border-b border-transparent focus:border-blue-400 px-1 py-1 outline-none font-mono font-medium" /></td>
+                                                    <td className="py-3 px-2"><input value={row.remarks} onChange={e => updateRow(row.id, 'remarks', e.target.value)} className="w-full bg-transparent focus:bg-white border-b border-transparent focus:border-blue-400 px-1 py-1 outline-none text-slate-400 placeholder-slate-200" placeholder="メモ..." /></td>
+                                                    <td className="py-3 px-2 text-center print-hidden"><button onClick={() => deleteRow(row.id)} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition p-1 rounded hover:bg-red-50"><Trash2Icon /></button></td>
+                                                </tr>
+                                            ))}
+                                            {rows.length === 0 && (
+                                                <tr>
+                                                    <td colSpan="6" className="py-8 text-center text-slate-400 text-sm border-dashed border-2 border-slate-100 rounded-lg mt-4 block w-full">
+                                                        データがありません。「行を追加」または「自動積算」を行ってください。
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                        <tfoot>
+                                            <tr className="bg-slate-50 font-bold border-t-2 border-slate-200 print-bg-white">
+                                                <td colSpan={3} className="py-4 px-4 text-right text-slate-600">合計金額</td>
+                                                <td className="py-4 px-2 text-right text-xl text-slate-900">{new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY' }).format(totalAmount)}</td>
+                                                <td colSpan={2}></td>
+                                            </tr>
+                                        </tfoot>
+                                    </table>
+                                </div>
+
+                                {/* Controls Area */}
+                                <div className="mt-8 bg-slate-50 rounded-xl p-6 border border-slate-200 border-dashed print-hidden">
+                                    <div className="flex flex-col md:flex-row gap-6">
+                                        <button onClick={() => addRow()} className="flex-1 flex items-center justify-center gap-2 bg-white text-blue-600 font-bold px-4 py-3 rounded-lg border-2 border-blue-100 hover:border-blue-300 hover:bg-blue-50 transition shadow-sm text-sm">
+                                            <PlusIcon /> 空の行を追加する
+                                        </button>
+                                        
+                                        <div className="flex-1 flex flex-col gap-3">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="text-xs font-bold text-slate-400 uppercase">経費の自動計算</span>
+                                                <div className="group relative">
+                                                    <InfoIcon className="w-4 h-4 text-slate-300 cursor-help" />
+                                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-slate-800 text-white text-xs p-2 rounded hidden group-hover:block z-10">工事費計に対して率を掛けて算出します。</div>
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div className="flex items-center justify-between gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
+                                                    <div className="flex items-center gap-2 text-sm text-slate-600">
+                                                        <span>法定福利費</span>
+                                                        <input type="number" value={welfareRate} onChange={e => setWelfareRate(e.target.value)} className="w-10 border-b border-slate-300 text-center font-bold" />
+                                                        <span>%</span>
+                                                    </div>
+                                                    <button onClick={addWelfare} className="text-xs bg-green-100 text-green-700 px-3 py-1.5 rounded hover:bg-green-200 font-bold transition">追加</button>
+                                                </div>
+                                                <div className="flex items-center justify-between gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
+                                                    <div className="flex items-center gap-2 text-sm text-slate-600">
+                                                        <span>諸経費</span>
+                                                        <input type="number" value={expenseRate} onChange={e => setExpenseRate(e.target.value)} className="w-10 border-b border-slate-300 text-center font-bold" />
+                                                        <span>%</span>
+                                                    </div>
+                                                    <button onClick={addOverhead} className="text-xs bg-slate-200 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-300 font-bold transition">追加</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </main>
+
+                    <AutoCalcModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onGenerate={generateBudget} />
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
